@@ -161,25 +161,48 @@ public:
 			return -1;
 		}
 
-		float bestDistance = -9999;
+		///																			TODO - - - Reformat for readability
+		float minimalDistanceToLine = 99999;
+		float minimalDistanceToPoint = 99999;
 		int bestIdx = 0;
 		// for every line we calculate the distance
-		for (int i = 0; i < wCtrlPoints.size() - 1; i++) {
+		for (int i = 0; i < wCtrlPoints.size(); i++) {
+			vec4 pointA, pointB;
 
-			vec4 lineVec = wCtrlPoints[i + 1] - wCtrlPoints[i]; // we get the vector that points from i to i+1
-			vec4 mouseVec = mouse - wCtrlPoints[i]; // we get vector that points from i to mouse point
+			if (i == wCtrlPoints.size() - 1) {
+				pointA = wCtrlPoints[i];
+				pointB = wCtrlPoints[0];
+			} else {
+				pointA = wCtrlPoints[i];
+				pointB = wCtrlPoints[i+1];
+			}
+
+			vec4 lineVec = pointB - pointA; // we get the vector that points from i to i+1
+			vec4 mouseVec = mouse - pointA; // we get vector that points from i to mouse point
 
 			float shadowLength = (dot(mouseVec, lineVec) / dot(lineVec, lineVec));
-			if (shadowLength < 0)
-				shadowLength = 0;
-			else if (shadowLength > 1)
-				shadowLength = 1;
 
-			vec4 closestPointToMouse = wCtrlPoints[i] + (lineVec * shadowLength);
-			float distance = dot(closestPointToMouse - mouse, closestPointToMouse - mouse);
-			if (bestDistance < distance) {
-				bestDistance = distance;
-				bestIdx = i+1;
+			if (0 < shadowLength && shadowLength < 1) {
+				vec4 closestPointToMouse = pointA + (lineVec * shadowLength);
+				float distance = dot(closestPointToMouse - mouse, closestPointToMouse - mouse);
+
+				if (minimalDistanceToLine > distance && minimalDistanceToPoint > distance) {
+					minimalDistanceToLine = distance;
+					if (i < wCtrlPoints.size() - 1)
+						bestIdx = i + 1;
+					else
+						bestIdx = 0;
+				}
+			} else {
+				float pointDistance = dot(pointA - mouse, pointA - mouse);
+
+				if (minimalDistanceToPoint > pointDistance && minimalDistanceToLine > pointDistance) {
+					minimalDistanceToPoint = pointDistance;
+					if (i < wCtrlPoints.size() - 1)
+						bestIdx = i;
+					else
+						bestIdx = 0;
+				}
 			}
 		}
 

@@ -115,7 +115,7 @@ const int nTesselatedVertices = 100;
 class SimplePolygon {
 	unsigned int vaoPolygon, vboPolygon;
 	unsigned int vaoCtrlPoints, vboCtrlPoints;
-	std::vector<vec4> wCtrlPoints;
+	std::vector<vec4> wCps;
 
 public:
 	SimplePolygon() {
@@ -145,19 +145,19 @@ public:
 	// Add a given 2D control point
 	virtual void AddControlPoint(float cX, float cY) {
 		vec4 wVertex = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
-		wCtrlPoints.push_back(wVertex);
+		wCps.push_back(wVertex);
 	}
 
 	// Returns the selected control point or -1
 	int PickControlPoint(float cX, float cY) {
 		vec4 mouse = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
-		for (unsigned int p = 0; p < wCtrlPoints.size(); p++) {
-			if (dot(wCtrlPoints[p] - mouse, wCtrlPoints[p] - mouse) < 0.1) 
+		for (unsigned int p = 0; p < wCps.size(); p++) {
+			if (dot(wCps[p] - mouse, wCps[p] - mouse) < 0.1) 
 				return p;
 		}
 
 
-		if (wCtrlPoints.size() < 2) {
+		if (wCps.size() < 2) {
 			return -1;
 		}
 
@@ -166,15 +166,15 @@ public:
 		float minimalDistanceToPoint = 99999;
 		int bestIdx = 0;
 		// for every line we calculate the distance
-		for (int i = 0; i < wCtrlPoints.size(); i++) {
+		for (int i = 0; i < wCps.size(); i++) {
 			vec4 pointA, pointB;
 
-			if (i == wCtrlPoints.size() - 1) {
-				pointA = wCtrlPoints[i];
-				pointB = wCtrlPoints[0];
+			if (i == wCps.size() - 1) {
+				pointA = wCps[i];
+				pointB = wCps[0];
 			} else {
-				pointA = wCtrlPoints[i];
-				pointB = wCtrlPoints[i+1];
+				pointA = wCps[i];
+				pointB = wCps[i+1];
 			}
 
 			vec4 lineVec = pointB - pointA; // we get the vector that points from i to i+1
@@ -188,7 +188,7 @@ public:
 
 				if (minimalDistanceToLine > distance && minimalDistanceToPoint > distance) {
 					minimalDistanceToLine = distance;
-					if (i < wCtrlPoints.size() - 1)
+					if (i < wCps.size() - 1)
 						bestIdx = i + 1;
 					else
 						bestIdx = 0;
@@ -198,7 +198,7 @@ public:
 
 				if (minimalDistanceToPoint > pointDistance && minimalDistanceToLine > pointDistance) {
 					minimalDistanceToPoint = pointDistance;
-					if (i < wCtrlPoints.size() - 1)
+					if (i < wCps.size() - 1)
 						bestIdx = i;
 					else
 						bestIdx = 0;
@@ -206,7 +206,7 @@ public:
 			}
 		}
 
-		wCtrlPoints.insert(wCtrlPoints.begin() + bestIdx, mouse);
+		wCps.insert(wCps.begin() + bestIdx, mouse);
 
 		return bestIdx;
 	}
@@ -214,7 +214,62 @@ public:
 	// An indexed point is changed with new values
 	void MoveControlPoint(int p, float cX, float cY) {
 		vec4 wVertex = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
-		wCtrlPoints[p] = wVertex;
+		wCps[p] = wVertex;
+	}
+
+	// Make the polygon more curvy
+	void Refine() {
+		
+		
+
+	}
+
+	// deletes ~half of the points
+	void Simplify() {
+		int removeNum = floor(wCps.size() / 2.0);
+		if (wCps.size() - removeNum <= 2)
+			return;
+
+		for (int rp = 0; rp < removeNum; rp++) {
+			// for every point we calculate the distance
+			int bestIdx = 0;
+			float minimalDistanceToLine = 99999;
+			for (int i = 0; i < wCps.size(); i++) {
+				vec4 pointPrev, pointCurrent, pointNext;
+
+				if (i == 0) {
+					pointPrev = wCps[wCps.size() - 1];
+					pointCurrent = wCps[i];
+					pointNext = wCps[i + 1];
+				}
+				else if (i == wCps.size() - 1) {
+					pointPrev = wCps[i - 1];
+					pointCurrent = wCps[i];
+					pointNext = wCps[0];
+				}
+				else {
+					pointPrev = wCps[i - 1];
+					pointCurrent = wCps[i];
+					pointNext = wCps[i + 1];
+				}
+
+				vec4 lineVec = pointPrev - pointNext; // we get the vector that points from i to i+1
+				vec4 mouseVec = pointCurrent - pointNext; // we get vector that points from i to mouse point
+
+				float shadowLength = (dot(mouseVec, lineVec) / dot(lineVec, lineVec));
+
+				if (0 < shadowLength && shadowLength < 1) {
+					vec4 closestPointToMouse = pointNext + (lineVec * shadowLength);
+					float distance = dot(closestPointToMouse - pointCurrent, closestPointToMouse - pointCurrent);
+
+					if (minimalDistanceToLine > distance) {
+						minimalDistanceToLine = distance;
+						bestIdx = i;
+					}
+				}
+			}
+			wCps.erase(wCps.begin() + bestIdx);
+		}
 	}
 
 	// Draw everything
@@ -226,21 +281,21 @@ public:
 		int colorLocation = glGetUniformLocation(gpuProgram.getId(), "color");
 
 		// draw ctrl points
-		if (wCtrlPoints.size() > 0) {	
+		if (wCps.size() > 0) {	
 			glBindVertexArray(vaoCtrlPoints);
 			glBindBuffer(GL_ARRAY_BUFFER, vboCtrlPoints);
-			glBufferData(GL_ARRAY_BUFFER, wCtrlPoints.size() * 4 * sizeof(float), &wCtrlPoints[0], GL_DYNAMIC_DRAW);
+			glBufferData(GL_ARRAY_BUFFER, wCps.size() * 4 * sizeof(float), &wCps[0], GL_DYNAMIC_DRAW);
 			if (colorLocation >= 0) glUniform3f(colorLocation, 1, 0, 0);
 			glPointSize(10.0f);
-			glDrawArrays(GL_POINTS, 0, wCtrlPoints.size());
+			glDrawArrays(GL_POINTS, 0, wCps.size());
 		}
 
 		// draw plygon
-		if (wCtrlPoints.size() >= 2) {
+		if (wCps.size() >= 2) {
 			std::vector<float> vertexData;
-			for (unsigned int i = 0; i < wCtrlPoints.size(); i++) {
-				vertexData.push_back(wCtrlPoints[i].x);
-				vertexData.push_back(wCtrlPoints[i].y);
+			for (unsigned int i = 0; i < wCps.size(); i++) {
+				vertexData.push_back(wCps[i].x);
+				vertexData.push_back(wCps[i].y);
 			}
 
 			// copy data to the GPU
@@ -248,7 +303,7 @@ public:
 			glBindBuffer(GL_ARRAY_BUFFER, vboPolygon);
 			glBufferData(GL_ARRAY_BUFFER, vertexData.size() * sizeof(vec4), &vertexData[0], GL_DYNAMIC_DRAW);
 			if (colorLocation >= 0) glUniform3f(colorLocation, 1, 1, 0);		// THERE WAS A ACCES EXCEPTION HERE!!!
-			glDrawArrays(GL_LINE_LOOP, 0, wCtrlPoints.size());
+			glDrawArrays(GL_LINE_LOOP, 0, wCps.size());
 		}
 	}
 };
@@ -258,14 +313,29 @@ public:
 
 #pragma region curves
 
-class Curve {
+// Catmull-Rom
+class CatmullRom {
 	unsigned int vaoCurve, vboCurve;
 	unsigned int vaoCtrlPoints, vboCtrlPoints;
 	unsigned int vaoAnimatedObject, vboAnimatedObject;
-protected:
-	std::vector<vec4> wCtrlPoints;		// coordinates of control points
+
+	float tension = -1;		// tension
+	std::vector<vec4> wCps;		// coordinates of control points
+	std::vector<float> ts;	// parameters/knots
+
+	// calculates the hermite curve between two given points
+	vec4 Hermite(vec4 p0, vec4 v0, float t0, vec4 p1, vec4 v1, float t1, float t) {
+		vec4 a0 = p0;
+		vec4 a1 = v0;
+		vec4 a2 = 3 * (p1 - p0) / (powf((t1 - t0), 2)) - (v1 + 2 * v0) / (t1 - t0);
+		vec4 a3 = 2 * (p0 - p1) / (powf((t1 - t0), 3)) + (v1 + v0) / (powf((t1 - t0), 2));
+
+		vec4 result = a3 * powf(t - t0, 3) + a2 * powf(t - t0, 2) + a1 * (t - t0) + a0;
+		//printf("\tPoint: (%f, %f) at %f\n\n", result.x, result.y, t);
+		return result;
+	};
 public:
-	Curve() {
+	CatmullRom() {
 		// Curve
 		glGenVertexArrays(1, &vaoCurve);
 		glBindVertexArray(vaoCurve);
@@ -301,64 +371,84 @@ public:
 
 	}
 
-	virtual vec4 r(float t) { return wCtrlPoints[0]; }
-	virtual float tStart() { return 0; }
-	virtual float tEnd() { return 1; }
-
 	// Add a given 2D control point
-	virtual void AddControlPoint(float cX, float cY) {
+	void AddControlPoint(float cX, float cY) {
 		vec4 wVertex = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
-		wCtrlPoints.push_back(wVertex);
+		float ti = wCps.size();
+		
+		wCps.push_back(wVertex);
+		ts.push_back(ti);
 	}
+
 
 	// Returns the selected control point or -1
 	int PickControlPoint(float cX, float cY) {
 		vec4 wVertex = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
-		for (unsigned int p = 0; p < wCtrlPoints.size(); p++) {
-			if (dot(wCtrlPoints[p] - wVertex, wCtrlPoints[p] - wVertex) < 0.1) return p;
+		for (unsigned int p = 0; p < wCps.size(); p++) {
+			if (dot(wCps[p] - wVertex, wCps[p] - wVertex) < 0.1) return p;
 		}
 		return -1;
-	}
-
-	// getting closest point on a line to a point
-	int GetClosestPointOnLine(float cX, float cY) {
-		if (wCtrlPoints.size() < 2) {
-												// TODO test this part
-			AddControlPoint(cX, cY);
-			return wCtrlPoints.size()-1;
-		}
-
-		vec4 mouse = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
-
-		vec4 bestVec = vec4(9999, 9999, 0, 0);
-		int bestIdx = 0;
-		// for every line we calculate the distance
-		for (int i = 0; i < wCtrlPoints.size()-1; i++) {
-			
-			vec4 lineVec = wCtrlPoints[i + 1] - wCtrlPoints[i]; // we get the vector that points from i to i+1
-			vec4 mouseVec = mouse - wCtrlPoints[i]; // we get vector that points from i to mouse point
-
-			float shadowLength = (dot(mouseVec, lineVec) / dot(lineVec, lineVec));
-			if (shadowLength < 0)
-				shadowLength = 0;
-			else if (shadowLength > 1)
-				shadowLength = 1;
-
-			vec4 vecToResult = wCtrlPoints[i] + (lineVec * shadowLength);
-			if (vecToResult.x * vecToResult.x + vecToResult.y * vecToResult.y < bestVec.x * bestVec.x + bestVec.y * bestVec.y) {
-				bestVec = vecToResult;
-				bestIdx = i;
-			}
-		}
-
-		wCtrlPoints.insert(wCtrlPoints.begin() + bestIdx, mouse);
-		return bestIdx;
 	}
 
 	// An indexed point is changed with new values
 	void MoveControlPoint(int p, float cX, float cY) {
 		vec4 wVertex = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
-		wCtrlPoints[p] = wVertex;
+		wCps[p] = wVertex;
+	}
+
+	float tStart() { return ts[0]; }
+	float tEnd() { return ts[wCps.size()-1]+1; }
+
+	// calculates a point in a given time
+	vec4 r(float t) {
+		// searching for adjacent points
+		for (int i = 0; i < wCps.size()+1; i++) {
+			int prev = i - 1, next = i + 1, nextnext = i + 2;
+			
+			float ts0, ts2, ts3;
+			if (prev < 0) {
+				prev = wCps.size() - 1;
+				ts0 = -1;
+			}
+			else
+				ts0 = ts[prev];
+
+			if (next > wCps.size() - 1) {
+				next = 0;
+				ts2 = ts[ts.size() - 1] + 1;
+				nextnext = 1;
+				ts3 = ts2 + 1;
+			}
+			else {
+				ts2 = ts[next];
+				ts3 = ts[nextnext];
+			}
+
+			if (nextnext > wCps.size() - 1) {
+				nextnext = 0;
+				ts3 = ts[ts.size() - 1] + 1;
+			}
+
+
+			// checking whether the 2 knot points are adjacent
+			if (ts[i] <= t && t <= ts2) {
+
+				// we need previous, current, next and the point after the next
+				vec4  p0 = wCps[prev], p1 = wCps[i], p2 = wCps[next], p3 = wCps[nextnext];
+				float ts1 = ts[i];
+
+				// we give a starting value for the velocity
+				vec4 v1 = vec4(1, 1, 0, 0), v2 = vec4(1, 1, 0, 0);
+				
+				// if the current point is not the starting or the ending point, then we can calculate it
+				v1 = (1 - tension) / 2 * ((p2 - p1) / (ts2 - ts1) + (p1 - p0) / (ts1 - ts0));
+				v2 = (1 - tension) / 2 * ((p3 - p2) / (ts3 - ts2) + (p2 - p1) / (ts2 - ts1));
+
+
+				// calculating a hermite curve between the current and the next point
+				return Hermite(p1, v1, ts1, p2, v2, ts2, t);
+			}
+		}
 	}
 
 	// Draw everything
@@ -369,21 +459,24 @@ public:
 
 		int colorLocation = glGetUniformLocation(gpuProgram.getId(), "color");
 
-		if (wCtrlPoints.size() > 0) {	// draw control points
+		if (wCps.size() > 0) {	// draw control points
 			glBindVertexArray(vaoCtrlPoints);
 			glBindBuffer(GL_ARRAY_BUFFER, vboCtrlPoints);
-			glBufferData(GL_ARRAY_BUFFER, wCtrlPoints.size() * 4 * sizeof(float), &wCtrlPoints[0], GL_DYNAMIC_DRAW);
+			glBufferData(GL_ARRAY_BUFFER, wCps.size() * 4 * sizeof(float), &wCps[0], GL_DYNAMIC_DRAW);
 			if (colorLocation >= 0) glUniform3f(colorLocation, 1, 0, 0);
 			glPointSize(10.0f);
-			glDrawArrays(GL_POINTS, 0, wCtrlPoints.size());
+			glDrawArrays(GL_POINTS, 0, wCps.size());
 		}
 
-		if (wCtrlPoints.size() >= 2) {	// draw curve
+		if (wCps.size() >= 2) {	// draw curve
 			std::vector<float> vertexData;
 			for (int i = 0; i < nTesselatedVertices; i++) {	// Tessellate
 				float tNormalized = (float)i / (nTesselatedVertices - 1);
 				float t = tStart() + (tEnd() - tStart()) * tNormalized;
+				//
 				vec4 wVertex = r(t);
+
+				// pushing data into the array
 				vertexData.push_back(wVertex.x);
 				vertexData.push_back(wVertex.y);
 			}
@@ -397,51 +490,11 @@ public:
 	}
 };
 
-// Bezier using Bernstein polynomials
-class BezierCurve : public Curve {
-	float B(int i, float t) {
-		int n = wCtrlPoints.size() - 1; // n deg polynomial = n+1 pts!
-		float choose = 1;
-		for (int j = 1; j <= i; j++) choose *= (float)(n - j + 1) / j;
-		return choose * pow(t, i) * pow(1 - t, n - i);
-	}
-public:
-	virtual vec4 r(float t) {
-		vec4 wPoint = vec4(0, 0, 0, 0);
-		for (unsigned int n = 0; n < wCtrlPoints.size(); n++) wPoint += wCtrlPoints[n] * B(n, t);
-		return wPoint;
-	}
-};
-
-// Lagrange curve
-class LagrangeCurve : public Curve {
-	std::vector<float> ts;  // knots
-	float L(int i, float t) {
-		float Li = 1.0f;
-		for (unsigned int j = 0; j < wCtrlPoints.size(); j++)
-			if (j != i) Li *= (t - ts[j]) / (ts[i] - ts[j]);
-		return Li;
-	}
-public:
-	void AddControlPoint(float cX, float cY) {
-		ts.push_back((float)wCtrlPoints.size());
-		Curve::AddControlPoint(cX, cY);
-	}
-	float tStart() { return ts[0]; }
-	float tEnd() { return ts[wCtrlPoints.size() - 1]; }
-
-	virtual vec4 r(float t) {
-		vec4 wPoint = vec4(0, 0, 0, 0);
-		for (unsigned int n = 0; n < wCtrlPoints.size(); n++) wPoint += wCtrlPoints[n] * L(n, t);
-		return wPoint;
-	}
-};
-
 #pragma endregion
 
 
 // The virtual world: collection of two objects
-Curve* curve;
+CatmullRom* curve;
 SimplePolygon* poly;
 
 // Initialization, create an OpenGL context
@@ -449,7 +502,7 @@ void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
 	glLineWidth(2.0f);
 
-	//curve = new Curve();
+	curve = new CatmullRom();
 	poly = new SimplePolygon();
 
 	// create program for the GPU
@@ -461,20 +514,22 @@ void onDisplay() {
 	glClearColor(0, 0, 0, 0);							// background color 
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // clear the screen
 
-	//curve->Draw();
-	poly->Draw();
+	curve->Draw();
+	//poly->Draw();
 	glutSwapBuffers();									// exchange the two buffers
 }
 
 // Key of ASCII code pressed
 void onKeyboard(unsigned char key, int pX, int pY) {
+	if (key == 'd') {
+		//poly->Simplify();
+	}
+
 	glutPostRedisplay();        // redraw
 }
 
 // Key of ASCII code released
-void onKeyboardUp(unsigned char key, int pX, int pY) {
-
-}
+void onKeyboardUp(unsigned char key, int pX, int pY) { }
 
 
 int pickedControlPoint = -1;
@@ -485,8 +540,8 @@ void onMouse(int button, int state, int pX, int pY) {
 		float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
 		float cY = 1.0f - 2.0f * pY / windowHeight;
 
-		//curve->AddControlPoint(cX, cY);
-		poly->AddControlPoint(cX, cY);
+		curve->AddControlPoint(cX, cY);
+		//poly->AddControlPoint(cX, cY);
 		glutPostRedisplay();     // redraw
 	}
 
@@ -494,9 +549,8 @@ void onMouse(int button, int state, int pX, int pY) {
 		float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
 		float cY = 1.0f - 2.0f * pY / windowHeight;
 
-		//pickedControlPoint = curve->GetClosestPointOnLine(cX, cY);
-		//pickedControlPoint = curve->PickControlPoint(cX, cY);
-		pickedControlPoint = poly->PickControlPoint(cX, cY);
+		pickedControlPoint = curve->PickControlPoint(cX, cY);
+		//pickedControlPoint = poly->PickControlPoint(cX, cY);
 		
 		glutPostRedisplay();     // redraw
 	}
@@ -510,8 +564,8 @@ void onMouse(int button, int state, int pX, int pY) {
 void onMouseMotion(int pX, int pY) {
 	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
 	float cY = 1.0f - 2.0f * pY / windowHeight;
-	//if (pickedControlPoint >= 0) curve->MoveControlPoint(pickedControlPoint, cX, cY);
-	if (pickedControlPoint >= 0) poly->MoveControlPoint(pickedControlPoint, cX, cY);
+	if (pickedControlPoint >= 0) curve->MoveControlPoint(pickedControlPoint, cX, cY);
+	//if (pickedControlPoint >= 0) poly->MoveControlPoint(pickedControlPoint, cX, cY);
 }
 
 // Idle event indicating that some time elapsed: do animation here

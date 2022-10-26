@@ -110,12 +110,97 @@ Camera camera;	// 2D camera
 GPUProgram gpuProgram; // vertex and fragment shaders
 const int nTesselatedVertices = 100;
 
-#pragma region polygon
+
+class CatmullRom {
+	float tension = -1;	
+	std::vector<vec4> wCps;
+	std::vector<float> ts;
+
+	// calculates the hermite curve between two given points
+	vec4 Hermite(vec4 p0, vec4 v0, float t0, vec4 p1, vec4 v1, float t1, float t) {
+		vec4 a0 = p0;
+		vec4 a1 = v0;
+		vec4 a2 = 3 * (p1 - p0) / (powf((t1 - t0), 2)) - (v1 + 2 * v0) / (t1 - t0);
+		vec4 a3 = 2 * (p0 - p1) / (powf((t1 - t0), 3)) + (v1 + v0) / (powf((t1 - t0), 2));
+
+		vec4 result = a3 * powf(t - t0, 3) + a2 * powf(t - t0, 2) + a1 * (t - t0) + a0;
+		//printf("\tPoint: (%f, %f) at %f\n\n", result.x, result.y, t);
+		return result;
+	};
+public:
+	// Add a given 2D control point
+	void AddControlPoint(vec4 wVertex) {
+		float ti = wCps.size();
+
+		wCps.push_back(wVertex);
+		ts.push_back(ti);
+	}
+
+	// calculates a point in a given time
+	vec4 r(float t) {
+		// searching for adjacent points
+		for (int i = 0; i < wCps.size() + 1; i++) {
+			int prev = i - 1, next = i + 1, nextnext = i + 2;
+
+			float ts0, ts2, ts3;
+			if (prev < 0) {
+				prev = wCps.size() - 1;
+				ts0 = -1;
+			}
+			else
+				ts0 = ts[prev];
+
+			if (next > wCps.size() - 1) {
+				next = 0;
+				ts2 = ts[ts.size() - 1] + 1;
+				nextnext = 1;
+				ts3 = ts2 + 1;
+			}
+			else {
+				ts2 = ts[next];
+				ts3 = ts[nextnext];
+			}
+
+			if (nextnext > wCps.size() - 1) {
+				nextnext = 0;
+				ts3 = ts[ts.size() - 1] + 1;
+			}
+
+
+			// checking whether the 2 knot points are adjacent
+			if (ts[i] <= t && t <= ts2) {
+
+				// we need previous, current, next and the point after the next
+				vec4  p0 = wCps[prev], p1 = wCps[i], p2 = wCps[next], p3 = wCps[nextnext];
+				float ts1 = ts[i];
+
+				// we give a starting value for the velocity
+				vec4 v1 = vec4(1, 1, 0, 0), v2 = vec4(1, 1, 0, 0);
+
+				// if the current point is not the starting or the ending point, then we can calculate it
+				v1 = (1 - tension) / 2 * ((p2 - p1) / (ts2 - ts1) + (p1 - p0) / (ts1 - ts0));
+				v2 = (1 - tension) / 2 * ((p3 - p2) / (ts3 - ts2) + (p2 - p1) / (ts2 - ts1));
+
+
+				// calculating a hermite curve between the current and the next point
+				return Hermite(p1, v1, ts1, p2, v2, ts2, t);
+			}
+		}
+	}
+
+	void Clear() {
+		wCps.clear();
+		ts.clear();
+	}
+};
+
 
 class SimplePolygon {
 	unsigned int vaoPolygon, vboPolygon;
 	unsigned int vaoCtrlPoints, vboCtrlPoints;
 	std::vector<vec4> wCps;
+
+	CatmullRom* curve = new CatmullRom();
 
 public:
 	SimplePolygon() {
@@ -219,9 +304,20 @@ public:
 
 	// Make the polygon more curvy
 	void Refine() {
-		
-		
+		for (int i = 0; i < wCps.size(); i++) {
+			curve->AddControlPoint(wCps[i]);//wCps[i].x, wCps[i].y);
+		}
 
+		std::vector<vec4> wCpsRef;
+		// we add a new point in between the existing ones
+		for (float t = 0.5; t < wCps.size(); t++) {
+			wCpsRef.push_back(wCps[t-0.5]);
+			vec4 newPoint = curve->r(t);
+			wCpsRef.push_back(newPoint);
+		}
+		curve->Clear();
+
+		wCps = wCpsRef;
 	}
 
 	// deletes ~half of the points
@@ -308,267 +404,70 @@ public:
 	}
 };
 
-#pragma endregion
 
-
-#pragma region curves
-
-// Catmull-Rom
-class CatmullRom {
-	unsigned int vaoCurve, vboCurve;
-	unsigned int vaoCtrlPoints, vboCtrlPoints;
-	unsigned int vaoAnimatedObject, vboAnimatedObject;
-
-	float tension = -1;		// tension
-	std::vector<vec4> wCps;		// coordinates of control points
-	std::vector<float> ts;	// parameters/knots
-
-	// calculates the hermite curve between two given points
-	vec4 Hermite(vec4 p0, vec4 v0, float t0, vec4 p1, vec4 v1, float t1, float t) {
-		vec4 a0 = p0;
-		vec4 a1 = v0;
-		vec4 a2 = 3 * (p1 - p0) / (powf((t1 - t0), 2)) - (v1 + 2 * v0) / (t1 - t0);
-		vec4 a3 = 2 * (p0 - p1) / (powf((t1 - t0), 3)) + (v1 + v0) / (powf((t1 - t0), 2));
-
-		vec4 result = a3 * powf(t - t0, 3) + a2 * powf(t - t0, 2) + a1 * (t - t0) + a0;
-		//printf("\tPoint: (%f, %f) at %f\n\n", result.x, result.y, t);
-		return result;
-	};
-public:
-	CatmullRom() {
-		// Curve
-		glGenVertexArrays(1, &vaoCurve);
-		glBindVertexArray(vaoCurve);
-
-		glGenBuffers(1, &vboCurve); // Generate 1 vertex buffer object
-		glBindBuffer(GL_ARRAY_BUFFER, vboCurve);
-		// Enable the vertex attribute arrays
-		glEnableVertexAttribArray(0);  // attribute array 0
-		// Map attribute array 0 to the vertex data of the interleaved vbo
-		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), NULL); // attribute array, components/attribute, component type, normalize?, stride, offset
-
-		// Control Points
-		glGenVertexArrays(1, &vaoCtrlPoints);
-		glBindVertexArray(vaoCtrlPoints);
-
-		glGenBuffers(1, &vboCtrlPoints); // Generate 1 vertex buffer object
-		glBindBuffer(GL_ARRAY_BUFFER, vboCtrlPoints);
-		// Enable the vertex attribute arrays
-		glEnableVertexAttribArray(0);  // attribute array 0
-		// Map attribute array 0 to the vertex data of the interleaved vbo
-		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), NULL); // attribute array, components/attribute, component type, normalize?, stride, offset
-
-		// Animated Object
-		glGenVertexArrays(1, &vaoAnimatedObject);
-		glBindVertexArray(vaoAnimatedObject);
-
-		glGenBuffers(1, &vboAnimatedObject); // Generate 1 vertex buffer object
-		glBindBuffer(GL_ARRAY_BUFFER, vboAnimatedObject);
-		// Enable the vertex attribute arrays
-		glEnableVertexAttribArray(0);  // attribute array 0
-		// Map attribute array 0 to the vertex data of the interleaved vbo
-		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), NULL); // attribute array, components/attribute, component type, normalize?, stride, offset
-
-	}
-
-	// Add a given 2D control point
-	void AddControlPoint(float cX, float cY) {
-		vec4 wVertex = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
-		float ti = wCps.size();
-		
-		wCps.push_back(wVertex);
-		ts.push_back(ti);
-	}
-
-
-	// Returns the selected control point or -1
-	int PickControlPoint(float cX, float cY) {
-		vec4 wVertex = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
-		for (unsigned int p = 0; p < wCps.size(); p++) {
-			if (dot(wCps[p] - wVertex, wCps[p] - wVertex) < 0.1) return p;
-		}
-		return -1;
-	}
-
-	// An indexed point is changed with new values
-	void MoveControlPoint(int p, float cX, float cY) {
-		vec4 wVertex = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
-		wCps[p] = wVertex;
-	}
-
-	float tStart() { return ts[0]; }
-	float tEnd() { return ts[wCps.size()-1]+1; }
-
-	// calculates a point in a given time
-	vec4 r(float t) {
-		// searching for adjacent points
-		for (int i = 0; i < wCps.size()+1; i++) {
-			int prev = i - 1, next = i + 1, nextnext = i + 2;
-			
-			float ts0, ts2, ts3;
-			if (prev < 0) {
-				prev = wCps.size() - 1;
-				ts0 = -1;
-			}
-			else
-				ts0 = ts[prev];
-
-			if (next > wCps.size() - 1) {
-				next = 0;
-				ts2 = ts[ts.size() - 1] + 1;
-				nextnext = 1;
-				ts3 = ts2 + 1;
-			}
-			else {
-				ts2 = ts[next];
-				ts3 = ts[nextnext];
-			}
-
-			if (nextnext > wCps.size() - 1) {
-				nextnext = 0;
-				ts3 = ts[ts.size() - 1] + 1;
-			}
-
-
-			// checking whether the 2 knot points are adjacent
-			if (ts[i] <= t && t <= ts2) {
-
-				// we need previous, current, next and the point after the next
-				vec4  p0 = wCps[prev], p1 = wCps[i], p2 = wCps[next], p3 = wCps[nextnext];
-				float ts1 = ts[i];
-
-				// we give a starting value for the velocity
-				vec4 v1 = vec4(1, 1, 0, 0), v2 = vec4(1, 1, 0, 0);
-				
-				// if the current point is not the starting or the ending point, then we can calculate it
-				v1 = (1 - tension) / 2 * ((p2 - p1) / (ts2 - ts1) + (p1 - p0) / (ts1 - ts0));
-				v2 = (1 - tension) / 2 * ((p3 - p2) / (ts3 - ts2) + (p2 - p1) / (ts2 - ts1));
-
-
-				// calculating a hermite curve between the current and the next point
-				return Hermite(p1, v1, ts1, p2, v2, ts2, t);
-			}
-		}
-	}
-
-	// Draw everything
-	void Draw() {
-		mat4 VPTransform = camera.V() * camera.P();
-
-		gpuProgram.setUniform(VPTransform, "MVP");
-
-		int colorLocation = glGetUniformLocation(gpuProgram.getId(), "color");
-
-		if (wCps.size() > 0) {	// draw control points
-			glBindVertexArray(vaoCtrlPoints);
-			glBindBuffer(GL_ARRAY_BUFFER, vboCtrlPoints);
-			glBufferData(GL_ARRAY_BUFFER, wCps.size() * 4 * sizeof(float), &wCps[0], GL_DYNAMIC_DRAW);
-			if (colorLocation >= 0) glUniform3f(colorLocation, 1, 0, 0);
-			glPointSize(10.0f);
-			glDrawArrays(GL_POINTS, 0, wCps.size());
-		}
-
-		if (wCps.size() >= 2) {	// draw curve
-			std::vector<float> vertexData;
-			for (int i = 0; i < nTesselatedVertices; i++) {	// Tessellate
-				float tNormalized = (float)i / (nTesselatedVertices - 1);
-				float t = tStart() + (tEnd() - tStart()) * tNormalized;
-				//
-				vec4 wVertex = r(t);
-
-				// pushing data into the array
-				vertexData.push_back(wVertex.x);
-				vertexData.push_back(wVertex.y);
-			}
-			// copy data to the GPU
-			glBindVertexArray(vaoCurve);
-			glBindBuffer(GL_ARRAY_BUFFER, vboCurve);
-			glBufferData(GL_ARRAY_BUFFER, vertexData.size() * sizeof(float), &vertexData[0], GL_DYNAMIC_DRAW);
-			if (colorLocation >= 0) glUniform3f(colorLocation, 1, 1, 0);
-			glDrawArrays(GL_LINE_STRIP, 0, nTesselatedVertices);
-		}
-	}
-};
-
-#pragma endregion
-
-
-// The virtual world: collection of two objects
-CatmullRom* curve;
 SimplePolygon* poly;
 
-// Initialization, create an OpenGL context
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
 	glLineWidth(2.0f);
 
-	curve = new CatmullRom();
 	poly = new SimplePolygon();
 
-	// create program for the GPU
 	gpuProgram.create(vertexSource, fragmentSource, "outColor");
 }
 
-// Window has become invalid: Redraw
 void onDisplay() {
-	glClearColor(0, 0, 0, 0);							// background color 
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // clear the screen
+	glClearColor(0, 0, 0, 0);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	curve->Draw();
-	//poly->Draw();
-	glutSwapBuffers();									// exchange the two buffers
+	poly->Draw();
+	glutSwapBuffers();
 }
 
-// Key of ASCII code pressed
 void onKeyboard(unsigned char key, int pX, int pY) {
 	if (key == 'd') {
-		//poly->Simplify();
+		poly->Simplify();
+	}
+	else if (key == 's') {
+		poly->Refine();
 	}
 
-	glutPostRedisplay();        // redraw
+	glutPostRedisplay();
 }
 
-// Key of ASCII code released
 void onKeyboardUp(unsigned char key, int pX, int pY) { }
 
-
 int pickedControlPoint = -1;
-
-// Mouse click event
 void onMouse(int button, int state, int pX, int pY) {
-	if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN) {  // GLUT_LEFT_BUTTON / GLUT_RIGHT_BUTTON and GLUT_DOWN / GLUT_UP
-		float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
+	if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN) {
+		float cX = 2.0f * pX / windowWidth - 1;
 		float cY = 1.0f - 2.0f * pY / windowHeight;
 
-		curve->AddControlPoint(cX, cY);
-		//poly->AddControlPoint(cX, cY);
-		glutPostRedisplay();     // redraw
+		poly->AddControlPoint(cX, cY);
+		glutPostRedisplay();
 	}
 
-	if (button == GLUT_RIGHT_BUTTON && state == GLUT_DOWN) {  // GLUT_LEFT_BUTTON / GLUT_RIGHT_BUTTON and GLUT_DOWN / GLUT_UP
-		float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
+	if (button == GLUT_RIGHT_BUTTON && state == GLUT_DOWN) {
+		float cX = 2.0f * pX / windowWidth - 1;
 		float cY = 1.0f - 2.0f * pY / windowHeight;
 
-		pickedControlPoint = curve->PickControlPoint(cX, cY);
-		//pickedControlPoint = poly->PickControlPoint(cX, cY);
+		pickedControlPoint = poly->PickControlPoint(cX, cY);
 		
-		glutPostRedisplay();     // redraw
+		glutPostRedisplay();
 	}
 
-	if (button == GLUT_RIGHT_BUTTON && state == GLUT_UP) {  // GLUT_LEFT_BUTTON / GLUT_RIGHT_BUTTON and GLUT_DOWN / GLUT_UP
+	if (button == GLUT_RIGHT_BUTTON && state == GLUT_UP) {
 		pickedControlPoint = -1;
 	}
 }
 
 // Move mouse with key pressed
 void onMouseMotion(int pX, int pY) {
-	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
+	float cX = 2.0f * pX / windowWidth - 1;
 	float cY = 1.0f - 2.0f * pY / windowHeight;
-	if (pickedControlPoint >= 0) curve->MoveControlPoint(pickedControlPoint, cX, cY);
-	//if (pickedControlPoint >= 0) poly->MoveControlPoint(pickedControlPoint, cX, cY);
+	if (pickedControlPoint >= 0) poly->MoveControlPoint(pickedControlPoint, cX, cY);
 }
 
-// Idle event indicating that some time elapsed: do animation here
 void onIdle() {
-	glutPostRedisplay();					// redraw the scene
+	glutPostRedisplay();
 }

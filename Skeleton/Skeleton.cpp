@@ -112,13 +112,22 @@ public:
 			);
 	}
 
-	// projection matrix
+	// perspective matrix 3D -> 2D 
 	mat4 P() { 
 		return mat4(
 			1 / (tan(fov / 2) * asp),	0,					0,							0,
 			0,							1 / tan(fov / 2),	0,							0,
 			0,							0,					-(fp + bp) / (bp - fp),		-1,
 			0,							0,					-2 * fp * bp / (bp - fp),	0
+		);
+	}
+
+	mat4 H() {
+		return mat4(
+			1, 0, 0, 0,
+			0, 1, 0, 0,
+			0, 0, 1, 0,
+			0, 0, 0, 1
 		);
 	}
 };
@@ -148,7 +157,7 @@ public:
 };
 
 struct RenderState {
-	mat4				MVP, M, Minv, V, P; // different translation matrixes
+	mat4				MVP, M, Minv, V, P; // different translation matrices
 	Material*			material;
 	std::vector<Light>	lights;
 	Texture*			texture;
@@ -175,7 +184,6 @@ public:
 	}
 };
 
-
 class PhongShader : public Shader {
 	const char* vertexSource = R"(
 		#version 330
@@ -188,7 +196,7 @@ class PhongShader : public Shader {
 
 		uniform mat4  MVP, M, Minv; // MVP, Model, Model-inverse
 		uniform Light[8] lights;    // light sources 
-		uniform int   nLights;
+		uniform int   nLights;		// number of lights
 		uniform vec3  wEye;         // pos of eye
 
 		layout(location = 0) in vec3  vtxPos;            // pos in modeling space
@@ -201,9 +209,10 @@ class PhongShader : public Shader {
 		out vec2 texcoord;
 
 		void main() {
-			gl_Position = vec4(vtxPos, 1) * MVP; // to NDC
+			gl_Position = vec4(vtxPos, 1) * MVP;	// to NDC
+			
 			// vectors for radiance computation
-			vec4 wPos = vec4(vtxPos, 1) * M;
+			vec4 wPos = vec4(vtxPos, 1) * M;		// pos in world space
 			for(int i = 0; i < nLights; i++) {
 				wLight[i] = lights[i].wLightPos.xyz * wPos.w - wPos.xyz * lights[i].wLightPos.w;
 			}
@@ -320,9 +329,13 @@ public:
 		Dnum2 U(u, vec2(1, 0)), V(v, vec2(0, 1));	// setting U and V
 		eval(U, V, X, Y, Z, W);						// calculating the 4 components (x,y,z,w)
 
-		vtxData.position = vec4(X.f, Y.f, Z.f, W.f);	// setting position
+		// setting position
+		vtxData.position = vec4(X.f, Y.f, Z.f, W.f);	
+
 		vec4 drdU(X.d.x, Y.d.x, Z.d.x, W.d.x),			// ???
 			 drdV(X.d.y, Y.d.y, Z.d.y, W.d.y);			// ???
+		
+		// setting normal vector
 		vtxData.normal = vec4(
 			drdU.y * drdV.z - drdU.z * drdV.y,
 			drdU.z * drdV.w - drdU.w * drdV.z,
@@ -385,6 +398,7 @@ public:
 	}
 };
 
+// TODO - make rotation
 struct Object {
 	Shader* shader;
 	Material* material;
@@ -394,32 +408,40 @@ struct Object {
 	float rotationAngle;
 public:
 	Object(Shader* _shader, Material* _material, Texture* _texture, Geometry* _geometry) :
-		scale(vec3(3, 3, 3)), translation(vec3(0, 0, 0)), rotationAxis(0, 0, 1), rotationAngle(0) {
+		scale(vec3(1, 1, 1)), translation(vec3(0, 0, 0)), rotationAxis(0, 0, 1), rotationAngle(0) {
 		shader = _shader;
 		texture = _texture;
 		material = _material;
 		geometry = _geometry;
 	}
 
+	// setting matrices
 	virtual void SetModelingTransform(mat4& M, mat4& Minv) {
-		M = ScaleMatrix(scale) * RotationMatrix(rotationAngle, rotationAxis) * TranslateMatrix(translation);
-		Minv = TranslateMatrix(-translation) * RotationMatrix(-rotationAngle, rotationAxis) * ScaleMatrix(vec3(1 / scale.x, 1 / scale.y, 1 / scale.z));
+		M = ScaleMatrix(scale) *							// scaling the object
+			RotationMatrix(rotationAngle, rotationAxis) *	// to rotate the object properly we have to set these params!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! TODO	
+			TranslateMatrix(translation);					// translating points
+		
+		Minv = TranslateMatrix(-translation) * 
+			   RotationMatrix(-rotationAngle, rotationAxis) * 
+			   ScaleMatrix(vec3(1 / scale.x, 1 / scale.y, 1 / scale.z));
 	}
 
 	void Draw(RenderState state) {
 		mat4 M, Minv;
 		SetModelingTransform(M, Minv);
-		state.M = M;
-		state.Minv = Minv;
-		state.MVP = state.M * state.V * state.P;
+
+		state.M = M;									// setting modelling matrix
+		state.Minv = Minv;								// setting inverse modelling matrix
+		state.MVP = state.M * state.V * state.P;		// modell * view * perspective
+
 		state.material = material;
 		state.texture = texture;
-		shader->Bind(state);
-		geometry->Draw();
+		shader->Bind(state);							// binding data (uniform)
+		geometry->Draw();								// drawing the geometry
 	}
 
 	virtual void Animate(float tstart, float tend) { 
-		rotationAngle = 0.8f * tend; 
+		rotationAngle = 0.8f * tend;					// rotating the object 
 	}
 };
 
@@ -448,7 +470,8 @@ public:
 
 
 		Object* kleinObject = new Object(phongShader, material1, texture4x8, klein);
-		kleinObject->translation = vec3(0, 0, 0);
+		kleinObject->translation = vec3(0, 0, 0);	// so the bottle is in the center
+		kleinObject->scale = vec3(2, 2, 2);			// scaling the bottle to make it bigger
 		objects.push_back(kleinObject);
 
 

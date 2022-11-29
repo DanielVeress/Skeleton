@@ -100,6 +100,7 @@ public:
 	}
 
 	// view matrix: translates the center to the origin
+	// defines position and orientation of the "camera"
 	mat4 V() { 
 		vec3 w = normalize(wEye - wLookat);
 		vec3 u = normalize(cross(wVup, w));
@@ -112,22 +113,15 @@ public:
 			);
 	}
 
-	// perspective matrix 3D -> 2D 
+	// perspective matrix for perspective projection
+	// the objects that are further aways from the camera become smaller
+	// Maps what the "camera" sees to NDC, taking care of aspect ratio and perspective
 	mat4 P() { 
 		return mat4(
 			1 / (tan(fov / 2) * asp),	0,					0,							0,
 			0,							1 / tan(fov / 2),	0,							0,
 			0,							0,					-(fp + bp) / (bp - fp),		-1,
 			0,							0,					-2 * fp * bp / (bp - fp),	0
-		);
-	}
-
-	mat4 H() {
-		return mat4(
-			1, 0, 0, 0,
-			0, 1, 0, 0,
-			0, 0, 1, 0,
-			0, 0, 0, 1
 		);
 	}
 };
@@ -184,6 +178,8 @@ public:
 	}
 };
 
+bool textured = true;
+
 class PhongShader : public Shader {
 	const char* vertexSource = R"(
 		#version 330
@@ -208,20 +204,31 @@ class PhongShader : public Shader {
 		out vec3 wLight[8];		    // light dir in world space
 		out vec2 texcoord;
 
+		uniform bool textured;
+		out float depthCue;
+
 		void main() {
-			gl_Position = vec4(vtxPos, 1) * MVP;	// to NDC
+			// projecting a vertes to NDC
+			vec4 holder = vec4(vtxPos.xyz, 1) * MVP;
+			gl_Position = holder;	// to NDC - Normalised Device Coordinates (from -1 to 1)
+			// if anything is outside of this [-1,1] square, then it is cut out and not rendered
+
+			depthCue = 1 / (dot(holder, holder) - 0.4f);
 			
-			// vectors for radiance computation
-			vec4 wPos = vec4(vtxPos, 1) * M;		// pos in world space
-			for(int i = 0; i < nLights; i++) {
-				wLight[i] = lights[i].wLightPos.xyz * wPos.w - wPos.xyz * lights[i].wLightPos.w;
+			if (textured) {
+				// vectors for radiance computation
+				vec4 wPos = vec4(vtxPos, 1) * M;		// pos in world space
+				for(int i = 0; i < nLights; i++) {
+					wLight[i] = lights[i].wLightPos.xyz * wPos.w - wPos.xyz * lights[i].wLightPos.w;
+				}
+				wView  = wEye * wPos.w - wPos.xyz;
+				wNormal = (Minv * vec4(vtxNorm, 0)).xyz;
+				texcoord = vtxUV;
 			}
-		    wView  = wEye * wPos.w - wPos.xyz;
-		    wNormal = (Minv * vec4(vtxNorm, 0)).xyz;
-		    texcoord = vtxUV;
 		}
 	)";
 
+#pragma region fragmentShader
 	// fragment shader in GLSL
 	// for calculating pixel color
 	const char* fragmentSource = R"(
@@ -248,31 +255,39 @@ class PhongShader : public Shader {
 		in  vec3 wLight[8];     // interpolated world sp illum dir
 		in  vec2 texcoord;
 		
+		uniform bool textured;
+		in	float depthCue;
+
         out vec4 fragmentColor; // output goes to frame buffer
 
 		void main() {
-			vec3 N = normalize(wNormal);
-			vec3 V = normalize(wView); 
-			if (dot(N, V) < 0) N = -N;	// prepare for one-sided surfaces like Mobius or Klein
-			vec3 texColor = texture(diffuseTexture, texcoord).rgb;
-			vec3 ka = material.ka * texColor;
-			vec3 kd = material.kd * texColor;
+			if(textured){
+				vec3 N = normalize(wNormal);
+				vec3 V = normalize(wView); 
+				if (dot(N, V) < 0) N = -N;	// prepare for one-sided surfaces like Mobius or Klein
+				vec3 texColor = texture(diffuseTexture, texcoord).rgb;
+				vec3 ka = material.ka * texColor;
+				vec3 kd = material.kd * texColor;
 
-			vec3 radiance = vec3(0, 0, 0);
-			for(int i = 0; i < nLights; i++) {
-				vec3 L = normalize(wLight[i]);
-				vec3 H = normalize(L + V);
-				float cost = max(dot(N,L), 0), cosd = max(dot(N,H), 0);
-				// kd and ka are modulated by the texture
-				radiance += ka * lights[i].La + 
-                           (kd * texColor * cost + material.ks * pow(cosd, material.shininess)) * lights[i].Le;
+				vec3 radiance = vec3(0, 0, 0);
+				for(int i = 0; i < nLights; i++) {
+					vec3 L = normalize(wLight[i]);
+					vec3 H = normalize(L + V);
+					float cost = max(dot(N,L), 0), cosd = max(dot(N,H), 0);
+					// kd and ka are modulated by the texture
+					radiance += ka * lights[i].La + 
+							   (kd * texColor * cost + material.ks * pow(cosd, material.shininess)) * lights[i].Le;
+				}
+				fragmentColor = vec4(radiance, 1);
+			} else {
+				fragmentColor = vec4(depthCue, depthCue, depthCue, 1);
 			}
-			fragmentColor = vec4(radiance, 1);
 		}
 	)";
+#pragma endregion
 public:
 	PhongShader() { create(vertexSource, fragmentSource, "fragmentColor"); }
-
+	
 	// setting data
 	void Bind(RenderState state) {
 		Use(); 		// make this program run
@@ -282,6 +297,8 @@ public:
 		setUniform(state.wEye, "wEye");
 		setUniform(*state.texture, std::string("diffuseTexture"));
 		setUniformMaterial(*state.material, "material");
+
+		setUniform(textured, "textured");
 
 		setUniform((int)state.lights.size(), "nLights");
 		for (unsigned int i = 0; i < state.lights.size(); i++) {
@@ -309,14 +326,14 @@ public:
 
 class ParamSurface : public Geometry {
 	struct VertexData {
-		vec4 position, normal;	// pisition and normal vector
-		vec2 texcoord;			// texture coords
+		vec4 position;	// position
+		vec4 normal;	// normal vector
+		vec2 texcoord;	// texture coords
 	};
 
 	unsigned int nVtxPerStrip, nStrips;
 public:
 	ParamSurface() { nVtxPerStrip = nStrips = 0; }
-
 	virtual void eval(Dnum2& U, Dnum2& V, Dnum2& X, Dnum2& Y, Dnum2& Z, Dnum2& W) = 0;
 
 	VertexData GenVertexData(float u, float v) {
@@ -324,7 +341,6 @@ public:
 
 		vtxData.texcoord = vec2(u, v);				// setting texture coords
 
-		// TO MAKE IT BACK: delete the w everywhere
 		Dnum2 X, Y, Z, W;
 		Dnum2 U(u, vec2(1, 0)), V(v, vec2(0, 1));	// setting U and V
 		eval(U, V, X, Y, Z, W);						// calculating the 4 components (x,y,z,w)
@@ -369,7 +385,12 @@ public:
 
 	void Draw() {
 		glBindVertexArray(vao);
-		for (unsigned int i = 0; i < nStrips; i++) glDrawArrays(GL_TRIANGLE_STRIP, i * nVtxPerStrip, nVtxPerStrip);
+		if (textured) {
+			for (unsigned int i = 0; i < nStrips; i++) glDrawArrays(GL_TRIANGLE_STRIP, i * nVtxPerStrip, nVtxPerStrip);
+		}
+		else {
+			for (unsigned int i = 0; i < nStrips; i++) glDrawArrays(GL_LINES, i * nVtxPerStrip, nVtxPerStrip);
+		}
 	}
 };
 
@@ -408,7 +429,7 @@ struct Object {
 	float rotationAngle;
 public:
 	Object(Shader* _shader, Material* _material, Texture* _texture, Geometry* _geometry) :
-		scale(vec3(1, 1, 1)), translation(vec3(0, 0, 0)), rotationAxis(0, 0, 1), rotationAngle(0) {
+		scale(vec3(1, 1, 1)), translation(vec3(0, 0, 0)), rotationAxis(1, 0, 1), rotationAngle(0) {
 		shader = _shader;
 		texture = _texture;
 		material = _material;
@@ -417,6 +438,7 @@ public:
 
 	// setting matrices
 	virtual void SetModelingTransform(mat4& M, mat4& Minv) {
+		// defines position, rotationand scale of the vertices of the model in the world.
 		M = ScaleMatrix(scale) *							// scaling the object
 			RotationMatrix(rotationAngle, rotationAxis) *	// to rotate the object properly we have to set these params!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! TODO	
 			TranslateMatrix(translation);					// translating points
@@ -530,7 +552,12 @@ void onDisplay() {
 }
 
 // Key of ASCII code pressed
-void onKeyboard(unsigned char key, int pX, int pY) { }
+void onKeyboard(unsigned char key, int pX, int pY) { 
+	if (key == ' ') {
+		// SPACE lenyomására huzalváz és tömör megjelenítés között kell váltani.
+		textured = !textured;
+	}
+}
 
 // Key of ASCII code released
 void onKeyboardUp(unsigned char key, int pX, int pY) { }

@@ -33,11 +33,9 @@
 //=============================================================================================
 #include "framework.h"
 
-//---------------------------
-template<class T> struct Dnum { // Dual numbers for automatic derivation
-	//---------------------------
-	float f; // function value
-	T d;  // derivatives
+template<class T> struct Dnum {
+	float f;
+	T d; 
 	Dnum(float f0 = 0, T d0 = T(0)) { f = f0, d = d0; }
 	Dnum operator+(Dnum r) { return Dnum(f + r.f, d + r.d); }
 	Dnum operator-(Dnum r) { return Dnum(f - r.f, d - r.d); }
@@ -49,7 +47,6 @@ template<class T> struct Dnum { // Dual numbers for automatic derivation
 	}
 };
 
-// Elementary functions prepared for the chain rule as well
 template<class T> Dnum<T> Exp(Dnum<T> g) { return Dnum<T>(expf(g.f), expf(g.f) * g.d); }
 template<class T> Dnum<T> Sin(Dnum<T> g) { return  Dnum<T>(sinf(g.f), cosf(g.f) * g.d); }
 template<class T> Dnum<T> Cos(Dnum<T>  g) { return  Dnum<T>(cosf(g.f), -sinf(g.f) * g.d); }
@@ -66,34 +63,7 @@ typedef Dnum<vec2> Dnum2;
 
 const int tessellationLevel = 40;
 bool textured = true;
-
-inline mat4 ScaleMatrix(vec4 s) {
-	return mat4(
-		vec4(s.x, 0, 0, 0),
-		vec4(0, s.y, 0, 0),
-		vec4(0, 0, s.z, 0),
-		vec4(0, 0, 0, s.w));
-}
-
-inline mat4 RotationOnXZ(float angle) {
-	float c = cosf(angle), s = sinf(angle);
-	return mat4(
-		vec4(c, 0, -s, 0),
-		vec4(0, 1, 0, 0),
-		vec4(s, 0, c, 0),
-		vec4(0, 0, 0, 1)
-	);
-}
-
-inline mat4 RotationOnYW(float angle) {
-	float c = cosf(angle), s = sinf(angle);
-	return mat4(
-		vec4(1, 0, 0, 0),
-		vec4(0, c, 0, -s),
-		vec4(0, 0, 1, 0),
-		vec4(0, s, 0, c)
-	);
-}
+float rotAngle = 0;
 
 struct Camera {
 	vec3 wEye, wLookat, wVup;		
@@ -191,6 +161,8 @@ class PhongShader : public Shader {
 		uniform int   nLights;	
 		uniform vec3  wEye; 
 
+		uniform float rotAngle;
+
 		layout(location = 0) in vec4  vtxPos; 
 		layout(location = 1) in vec4  vtxNorm; 
 		layout(location = 2) in vec2  vtxUV;
@@ -205,9 +177,13 @@ class PhongShader : public Shader {
 
 		void main() {
 			float d = (vtxPos.x * vtxPos.x + vtxPos.y * vtxPos.y + vtxPos.z * vtxPos.z + vtxPos.w * vtxPos.w) / 2;
-			gl_Position = vec4(vtxPos.xy, vtxPos.z * d, vtxPos.w) * MVP;
+			
+			vec4 rotatedXZ = vec4(vtxPos.x * cos(rotAngle) - vtxPos.z * sin(rotAngle), vtxPos.y, vtxPos.z * cos(rotAngle) + vtxPos.x * sin(rotAngle), vtxPos.w);
+			vec4 rotatedYW = vec4(rotatedXZ.x, rotatedXZ.y * cos(rotAngle) - rotatedXZ.w * sin(rotAngle), rotatedXZ.z, rotatedXZ.w * cos(rotAngle) + rotatedXZ.y * sin(rotAngle));
+			
+			gl_Position = vec4(rotatedYW.xy, rotatedYW.z * d, 1) * MVP;
 
-			vec4 translatedVtx = vtxPos * M;
+			vec4 translatedVtx = rotatedYW * M;
 			depthCue = 1 / (dot(translatedVtx, translatedVtx) - 0.1f);
 			
 			vec4 wPos = vec4(vtxPos.xyz, 1) * M;
@@ -290,6 +266,8 @@ public:
 		setUniformMaterial(*state.material, "material");
 
 		setUniform(textured, "textured");
+
+		setUniform(rotAngle, "rotAngle");
 
 		setUniform((int)state.lights.size(), "nLights");
 		for (unsigned int i = 0; i < state.lights.size(); i++) {
@@ -406,11 +384,10 @@ struct Object {
 	Material* material;
 	Texture* texture;
 	Geometry* geometry;
-	vec4 scale;
-	float rotationAngle;
+	vec3 scale;
 public:
 	Object(Shader* _shader, Material* _material, Texture* _texture, Geometry* _geometry) :
-		scale(vec4(1, 1, 1, 1)), rotationAngle(0) {
+		scale(vec3(5, 5, 5)) {
 		shader = _shader;
 		texture = _texture;
 		material = _material;
@@ -418,13 +395,9 @@ public:
 	}
 
 	virtual void SetModelingTransform(mat4& M, mat4& Minv) {
-		M = ScaleMatrix(scale) *
-			RotationOnYW(rotationAngle) *
-			RotationOnXZ(rotationAngle);
+		M = ScaleMatrix(scale);
 		
-		Minv =	RotationOnXZ(-rotationAngle) *
-				RotationOnYW(-rotationAngle) *
-				ScaleMatrix(vec4(1 / scale.x, 1 / scale.y, 1 / scale.z, 1 / scale.w));
+		Minv = ScaleMatrix(vec3(1 / scale.x, 1 / scale.y, 1 / scale.z));
 	}
 
 	void Draw(RenderState state) {
@@ -442,7 +415,7 @@ public:
 	}
 
 	virtual void Animate(float tstart, float tend) { 
-		rotationAngle = 0.8f * tend;
+		rotAngle = 0.8f * tend;
 	}
 };
 
